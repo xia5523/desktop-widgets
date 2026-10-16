@@ -37,13 +37,17 @@ class DesktopWidget {
     var panel: NSPanel?
     var paused = false
     var settingsWindow: NSWindow?
-    private var lastDate = Date.distantPast
+    var lastDate = Date.distantPast   // 供覆盖 frame() 的子类（数字雨）复用 dt 计算
 
     // ---------- 子类覆盖 ----------
     var id: String { "" }
     var name: String { "" }
     var defaultSize: Int { 240 }
     var designSize: CGFloat { 240 }
+    /// 全屏矩形挂件：整面响应鼠标、不拖动、面板需成为 key 窗（ESC 退出）
+    var isFullScreenSurface: Bool { false }
+    /// TimelineView 最低帧间隔（秒）；nil = 全速动画。数字雨 20 步/秒够用且省电
+    var frameInterval: Double? { nil }
     var settings: [Setting] { [] }
     /// 应用并持久化一个设置项（必须自己 defaults.set）
     func applySetting(_ key: String, _ value: String) {}
@@ -79,15 +83,7 @@ class DesktopWidget {
     func show() {
         if panel == nil {
             let size = intVal("size", defaultSize)
-            let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: size, height: size),
-                            styleMask: [.borderless, .nonactivatingPanel],
-                            backing: .buffered, defer: false)
-            p.level = .floating
-            p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            p.isOpaque = false
-            p.backgroundColor = .clear
-            p.hasShadow = false
-            p.hidesOnDeactivate = false
+            let p = makePanel(size)
             let hv = WidgetHostingView(rootView: SurfaceView(widget: self))
             hv.autoresizingMask = [.width, .height]
             hv.widget = self
@@ -96,6 +92,24 @@ class DesktopWidget {
             initialLocation()
         }
         panel?.orderFrontRegardless()
+    }
+
+    /// 创建宿主面板；全屏挂件可覆盖换面板类型（数字雨的 MatrixPanel 要 canBecomeKey）
+    func makePanel(_ size: Int) -> NSPanel {
+        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: size, height: size),
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: false)
+        configure(p)
+        return p
+    }
+
+    func configure(_ p: NSPanel) {
+        p.level = .floating
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = false
+        p.hidesOnDeactivate = false
     }
 
     func hide() { panel?.orderOut(nil) }
@@ -159,7 +173,7 @@ class DesktopWidget {
 struct SurfaceView: View {
     let widget: DesktopWidget
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(minimumInterval: widget.frameInterval)) { timeline in
             Canvas { ctx, size in
                 widget.frame(timeline.date, &ctx, size)
             }
@@ -174,7 +188,19 @@ final class WidgetHostingView: NSHostingView<SurfaceView> {
     private var dragMouse: NSPoint?
     private var dragWin: NSPoint?
 
+    override var acceptsFirstResponder: Bool { true }
+
+    /// ESC = 隐藏（数字雨全屏雨幕的退出键；圆形挂件面板不会成为 key 窗，无副作用）
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { widget?.hide(); return }
+        super.keyDown(with: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        if widget?.isFullScreenSurface == true {              // 全屏挂件：整面响应
+            if event.clickCount >= 2 { widget?.hide() }       // 双击 = 退出雨幕
+            return                                           // 单击不拖动
+        }
         let b = bounds
         let p = convert(event.locationInWindow, from: nil)
         let dx = p.x - b.midX, dy = p.y - b.midY

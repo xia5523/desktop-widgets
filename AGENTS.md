@@ -24,13 +24,17 @@ cd /Users/xiaren/Documents/claude_project/desktop-widgets
 
 保持"无构建工具、无依赖管理、无资源文件"的状态，不要引入 SPM/Xcode 工程/第三方库。
 
-## 架构（4 个文件）
+## 架构（8 个文件）
 
 | 文件 | 职责 |
 |---|---|
-| `src/Widget.swift` | `DesktopWidget` 基类：无边框圆形 NSPanel 生命周期、`Setting` 设置项描述、UserDefaults 持久化读取、TimelineView+Canvas 每帧驱动、AppKit 自动设置面板 |
+| `src/Widget.swift` | `DesktopWidget` 基类：无边框 NSPanel 生命周期（`makePanel`/`configure` 可换面板类型）、`Setting` 设置项描述、UserDefaults 持久化读取、TimelineView+Canvas 每帧驱动、AppKit 自动设置面板 |
 | `src/CompassWidget.swift` | 类别①"罗盘"：五环古风罗盘全部绘制逻辑 + 三套 Palette |
 | `src/TaijiWidget.swift` | 类别②"太极"：玉环 + 阴阳鱼（最简实现参考） |
+| `src/LanternWidget.swift` | 类别③"灯笼"：红纱宫灯，烛光呼吸 + 挂点摆动 + 流苏滞后摆 |
+| `src/ClockWidget.swift` | 类别④"时辰钟"：十二时辰真时钟（Date 驱动，子在正上） |
+| `src/SharinganWidget.swift` | 类别⑤"写轮眼"：三勾玉缓转；勾玉 = 胖圆头 + 内收螺线短肥尾 |
+| `src/MatrixRainWidget.swift` | 类别⑥"数字雨"：全屏 Matrix 雨幕（像素坐标直绘、ESC 退出） |
 | `src/main.swift` | 宿主：注册类别、托盘分级菜单（TrayMenuBuilder 闭包式 target-action）、入口 |
 
 ### 新增一个挂件类别
@@ -43,9 +47,22 @@ cd /Users/xiaren/Documents/claude_project/desktop-widgets
 4. 可选：覆盖 `addQuickItems` 加托盘快捷项、`onWheel` 加滚轮行为、`initialOffset` 控制首屏位置
 5. 在 `main.swift` 的 `[DesktopWidget]` 数组里注册
 
-动画模式统一：`TimelineView(.animation)` 每帧回调 → `frame(date, ctx, size)` 计算
-`dt`（钳制 `0 < dt <= 0.1`，防休眠跳变）→ `tick(dt:)` 推进角度 → `draw()` 全量重画。
-窗口不可见或 paused 时不 tick。**没有定时器对象**，暂停=不推进状态。
+动画模式统一：`TimelineView(.animation(minimumInterval: frameInterval))` 每帧回调 →
+`frame(date, ctx, size)` 计算 `dt`（钳制 `0 < dt <= 0.1`，防休眠跳变）→ `tick(dt:)`
+推进角度 → `draw()` 全量重画。窗口不可见或 paused 时不 tick。**没有定时器对象**，
+暂停=不推进状态。全屏/重型挂件覆盖 `frameInterval` 限帧（数字雨 20 步/秒）。
+
+### 全屏挂件（数字雨一系）
+
+与圆形挂件的差异，全部走基类钩子，别另起炉灶：
+- **像素坐标直绘**：覆盖 `frame()`，跳过基类的"中心平移 + 等比缩放"，左上原点画；
+  `lastDate` 已放开为内部可见，dt 计算照抄基类两行。
+- **面板要能成为 key 窗**（收 ESC）：无边框 NSPanel 默认 `canBecomeKey = false`，
+  覆盖 `makePanel` 返回 `MatrixPanel` 这类 `canBecomeKey = true` 的子类；`show()`
+  里 `NSApp.activate` + `makeKey()`。
+- **`isFullScreenSurface = true`**：宿主视图整面响应（不做圆形命中/拖动），
+  双击退出；ESC 在 `WidgetHostingView.keyDown`（keyCode 53）统一处理。
+- **铺屏**：覆盖 `initialLocation`，`setFrame(screen.frame)`；覆盖主屏。
 
 ## 关键设计决策（改动前必读，全是踩过的坑）
 
@@ -90,8 +107,11 @@ cd /Users/xiaren/Documents/claude_project/desktop-widgets
 
 ## 画面规范
 
-- 所有挂件按**设计坐标**绘制（罗盘 360、太极 240），`frame()` 里统一平移到中心 +
-  `scale(size/designSize)`，窗口大小变化时画面等比缩放。
+- 所有挂件按**设计坐标**绘制（罗盘/灯笼/时钟/写轮眼 360、太极 240），`frame()` 里统一
+  平移到中心 + `scale(size/designSize)`，窗口大小变化时画面等比缩放；全屏挂件（数字雨）
+  例外，像素坐标直绘。
+- **径向渐变没有直接 API**：SwiftUI `GraphicsContext` 只有线性渐变，径向用 N 层同心圆
+  离散逼近（见写轮眼红瞳的 `lerpRGB(UInt32)`——Color 分量不可直读，用 UInt32 换算插值）。
 - 配色收进 `Palette`（`CompassWidget.TANG/BRONZE/INKP`），禁止散落魔法色值；
   新增样式 = 加一个 Palette + 挂进数组 + 设置项 options 同步。
 - 罗盘环结构（外→内）：联珠纹 → 地支十二字 → 回纹 → 祥云 → 团花，每环独立转速
@@ -109,8 +129,10 @@ cd /Users/xiaren/Documents/claude_project/desktop-widgets
 
 ## 交互约定
 
-- 拖动 = 移动；圆外不响应
-- 双击 = 隐藏/显示切换（显示走托盘）
+- **启动时所有挂件隐藏**，用户从托盘逐个打开（`applicationDidFinishLaunching`
+  不再自动 `show()`）
+- 拖动 = 移动；圆外不响应（全屏挂件：整面响应、不拖动）
+- 双击 = 隐藏/显示切换（显示走托盘）；全屏雨幕 ESC / 双击 = 退出
 - 滚轮 = 临时调速（`wheelFactor` 运行时系数，不持久化，只作用于罗盘）
 - 托盘 = 每类别一个顶级子菜单：显示/隐藏、暂停/继续、快捷项、参数设置…
 

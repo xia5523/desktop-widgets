@@ -44,7 +44,8 @@ final class TrayMenuBuilder {
 
 // MARK: - 应用入口
 
-let widgets: [DesktopWidget] = [CompassWidget(), TaijiWidget()]
+let widgets: [DesktopWidget] = [CompassWidget(), TaijiWidget(), LanternWidget(),
+                                ClockWidget(), SharinganWidget(), MatrixRainWidget()]
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -57,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     init(widgets: [DesktopWidget]) { self.widgets = widgets }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        for w in widgets { w.show() }
+        // 启动时全部隐藏，用户从托盘子菜单逐个打开
         buildStatusItem()
     }
 
